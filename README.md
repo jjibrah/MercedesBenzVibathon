@@ -25,22 +25,30 @@ License shown by Kaggle: CC0 / Public Domain
 - `telemetry_receiver_test.py` — displays packets arriving on UDP port 5005.
 - `vehicle_data.csv` — real OBD-II driving dataset.
 
-## Network contract
+## Network contract and backend relay
 
-Telemetry output:
+This workspace contains a small UDP relay in `backend_infrastructure/central_relay.py` that sits between the
+simulator and the AI/watchdog/frontend components. The relay centralizes telemetry validation and measures
+latency while forwarding messages to the configured destinations.
 
-- Protocol: UDP
-- Address: `127.0.0.1`
-- Port: `5005`
-- Frequency: approximately 10 packets per second
-- Encoding: UTF-8 JSON
+Telemetry flow:
 
-Command input:
+- Simulator (`fake_car.py`) -> Relay input (`protocol_config.json` -> `ports.simulation_in`)
+- Relay validates telemetry and forwards to AI telemetry listener (`ports.ai_telemetry_out`)
 
-- Protocol: UDP
-- Address: `127.0.0.1`
-- Port: `5006`
-- Encoding: UTF-8 JSON
+Command flow:
+
+- AI sends commands to the relay (`ports.ai_command_in`)
+- Relay forwards commands to the frontend or simulator output (`ports.frontend_out`)
+
+Default network ports (see `backend_infrastructure/protocol_config.json`):
+
+- `simulation_in`: 5004 (simulator should send telemetry here)
+- `ai_telemetry_out`: 5005 (AI/watchdog/receiver listens here)
+- `ai_command_in`: 5006 (relay listens here for AI commands)
+- `frontend_out`: 5007 (relay forwards commands here)
+
+Encoding: UTF-8 JSON for both telemetry and commands.
 
 Example telemetry packet:
 
@@ -59,23 +67,30 @@ Example telemetry packet:
 
 ## Running the demonstration
 
-Open three VS Code terminals.
+Open four VS Code terminals and run the components in this order so the relay can forward messages correctly.
 
-### Terminal 1 — telemetry receiver/backend test
+### Terminal 1 — relay
+
+```powershell
+cd backend_infrastructure
+python central_relay.py
+```
+
+### Terminal 2 — telemetry receiver / AI test
 
 ```powershell
 cd simulation
 python telemetry_receiver_test.py
 ```
 
-### Terminal 2 — virtual vehicle
+### Terminal 3 — virtual vehicle
 
 ```powershell
 cd simulation
 python fake_car.py
 ```
 
-### Terminal 3 — attack and recovery
+### Terminal 4 — attack and recovery (commands)
 
 Start the leak:
 
@@ -87,6 +102,7 @@ python chaos_bomb.py
 Reset memory to 40%:
 
 ```powershell
+cd simulation
 python reset_simulation.py
 ```
 
