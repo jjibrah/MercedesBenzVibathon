@@ -4,7 +4,7 @@ This package implements the Software-in-the-Loop virtual vehicle for the Shadow 
 
 ## Included dataset
 
-`simulation/vehicle_data.csv` is the `dailyRoutes.csv` dataset from the public `cephasax/OBDdatasets` repository. The same repository is linked from the Kaggle dataset **OBD-II datasets** by cephasax. It contains real OBD-II automobile readings and more than 60,000 records. The simulator uses:
+`simulation/vehicle_data.csv` is the `dailyRoutes.csv` dataset from the public `cephasax/OBDdatasets` repository. The same repository is linked from the Kaggle dataset **OBD-II datasets** by cephasax. It contains real OBD-II automobile readings and more than 45,000 records. The simulator uses:
 
 - `SPEED` — vehicle speed in km/h
 - `ENGINE_RPM` — engine revolutions per minute

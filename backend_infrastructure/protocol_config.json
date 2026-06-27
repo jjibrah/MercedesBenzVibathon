@@ -4,7 +4,8 @@
     "simulation_in": 5004,
     "ai_telemetry_out": 5005,
     "ai_command_in": 5006,
-    "frontend_out": 5007
+    "frontend_out": 5007,
+    "simulator_command_in": 5008
   },
   "performance": {
     "max_allowed_latency_ms": 100

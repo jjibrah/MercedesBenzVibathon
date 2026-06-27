@@ -7,12 +7,18 @@ from pathlib import Path
 from typing import Any
 
 HOST = "127.0.0.1"
-# Send telemetry to the relay's simulation input port (protocol_config.json -> ports.simulation_in)
-TELEMETRY_PORT = 5004
-# Listen for forwarded commands from the relay (protocol_config.json -> ports.frontend_out)
-COMMAND_PORT = 5007
 TELEMETRY_INTERVAL = 0.1
 CSV_FILE = Path(__file__).parent / "vehicle_data.csv"
+CONFIG_FILE = Path(__file__).resolve().parents[1] / "backend_infrastructure" / "protocol_config.json"
+
+with CONFIG_FILE.open("r", encoding="utf-8") as config_handle:
+    PROTOCOL_CONFIG = json.load(config_handle)
+
+HOST = PROTOCOL_CONFIG["host"]
+# Send telemetry to the relay's simulation input port (protocol_config.json -> ports.simulation_in)
+TELEMETRY_PORT = PROTOCOL_CONFIG["ports"]["simulation_in"]
+# Listen for forwarded commands from the relay (protocol_config.json -> ports.simulator_command_in)
+COMMAND_PORT = PROTOCOL_CONFIG["ports"]["simulator_command_in"]
 
 BASELINE_MEMORY = 40.0
 MAX_MEMORY = 100.0

@@ -1,10 +1,10 @@
-import json
+﻿import json
 import logging
 
 def validate_telemetry(payload: bytes) -> dict:
     """
     Decode the UDP packet and validate it matches the simulator telemetry schema.
-    Expected minimal schema: {"timestamp": number, "vehicle_id": str}
+    Expected minimal schema: {"timestamp": number, "vehicle_id": str, "ecu_memory_percent": number}
     Returns the parsed dictionary if valid, or None if malformed.
     """
     try:

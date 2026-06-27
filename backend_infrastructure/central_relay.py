@@ -3,7 +3,11 @@ import json
 import threading
 import time
 import logging
-from json_validator import validate_telemetry
+from json_validator import (
+    validate_telemetry,
+    transform_telemetry_for_ai,
+    validate_ai_command,
+)
 
 # ---------------------------------------------------------
 # 1. INITIALIZE AUDIT TRAIL (latency_monitor.log)
@@ -35,6 +39,7 @@ SIM_IN_PORT = config['ports']['simulation_in']
 AI_OUT_PORT = config['ports']['ai_telemetry_out']
 AI_IN_PORT = config['ports']['ai_command_in']
 FRONTEND_OUT_PORT = config['ports']['frontend_out']
+SIM_COMMAND_IN_PORT = config['ports']['simulator_command_in']
 
 # ---------------------------------------------------------
 # 3. THE RELAY THREADS
@@ -55,51 +60,59 @@ def telemetry_relay():
     
     while True:
         try:
-            payload, addr = rx_sock.recvfrom(1024)
-            start_time = time.perf_counter() # Start stopwatch
-            
-            # Validate Payload
-            if validate_telemetry(payload):
-                # Forward to AI
-                tx_sock.sendto(payload, (HOST, AI_OUT_PORT))
-                
-                # Stop stopwatch and log latency
-                latency_ms = (time.perf_counter() - start_time) * 1000
-                logging.info(f"[TELEMETRY ROUTED] Latency: {latency_ms:.3f} ms")
-                
+            payload, addr = rx_sock.recvfrom(4096)
+            start_time = time.perf_counter()  # Start stopwatch
+
+            validated = validate_telemetry(payload)
+            if validated is None:
+                continue
+
+            ai_payload = transform_telemetry_for_ai(validated)
+            tx_sock.sendto(ai_payload, (HOST, AI_OUT_PORT))
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            logging.info(
+                f"[TELEMETRY ROUTED] Latency: {latency_ms:.3f} ms | Sequence: {validated.get('sequence')}"
+            )
+
         except Exception as e:
             logging.error(f"[TELEMETRY CRASH] {e}")
 
 
 def command_relay():
     """ 
-    Thread 2: Listens for AI Commands (5006), 
-    and forwards to the Frontend UI (5007). 
+    Thread 2: Listens for AI Commands (5006),
+    validates them, and broadcasts to frontend and simulator command ports.
     """
     # Socket to receive from AI Watchdog
     rx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     rx_sock.bind((HOST, AI_IN_PORT))
     
-    # Socket to send to Frontend
+    # Socket to send to Frontend and Simulator
     tx_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
-    print(f"[ACTIVE] Command Pipeline: Listening on {AI_IN_PORT} -> Forwarding to {FRONTEND_OUT_PORT}")
+    print(
+        f"[ACTIVE] Command Pipeline: Listening on {AI_IN_PORT} -> Forwarding to {FRONTEND_OUT_PORT} and {SIM_COMMAND_IN_PORT}"
+    )
     
     while True:
         try:
-            payload, addr = rx_sock.recvfrom(1024)
+            payload, addr = rx_sock.recvfrom(4096)
             start_time = time.perf_counter()
-            
-            # Forward directly to UI (No validation needed for simple strings)
-            tx_sock.sendto(payload, (HOST, FRONTEND_OUT_PORT))
-            
-            # Stop stopwatch and log latency
+
+            command_data = validate_ai_command(payload)
+            if command_data is None:
+                continue
+
+            command_payload = json.dumps(command_data).encode('utf-8')
+            tx_sock.sendto(command_payload, (HOST, FRONTEND_OUT_PORT))
+            tx_sock.sendto(command_payload, (HOST, SIM_COMMAND_IN_PORT))
+
             latency_ms = (time.perf_counter() - start_time) * 1000
-            
-            # Decode the command string just for the log
-            cmd_str = payload.decode('utf-8').strip()
-            logging.info(f"[COMMAND ROUTED] Latency: {latency_ms:.3f} ms | State: {cmd_str}")
-            
+            logging.info(
+                f"[COMMAND ROUTED] Latency: {latency_ms:.3f} ms | Command: {command_data['command']}"
+            )
+
         except Exception as e:
             logging.error(f"[COMMAND CRASH] {e}")
 
