@@ -1,0 +1,12 @@
+{
+  "host": "127.0.0.1",
+  "ports": {
+    "simulation_in": 5004,
+    "ai_telemetry_out": 5005,
+    "ai_command_in": 5006,
+    "frontend_out": 5007
+  },
+  "performance": {
+    "max_allowed_latency_ms": 100
+  }
+}
