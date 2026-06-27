@@ -1,0 +1,9 @@
+Dataset used: OBD-II datasets
+Kaggle identifier: cephasax/obdii-ds3
+Kaggle page: https://www.kaggle.com/datasets/cephasax/obdii-ds3
+Source repository: https://github.com/cephasax/OBDdatasets
+Included source file: masterDegreeResearch/dailyRoutes.csv
+Local filename: simulation/vehicle_data.csv
+Approximate records: 60,439
+Required columns: SPEED, ENGINE_RPM
+Kaggle-listed license: CC0: Public Domain
