@@ -116,4 +116,51 @@ python reset_simulation.py
 
 ## Python requirements
 
-Only the Python standard library is used. Python 3.10 or newer is recommended.
+Only the Python standard library is used. Python 3.10 or newer is recommended. Note that `shadow_ai.py` requires the `websockets` third-party library (`pip install websockets`).
+
+---
+
+## MBUX Hyperscreen Frontend & Watchdog Server
+
+We have integrated a visually stunning, Mercedes-Benz MBUX-inspired automotive cockpit dashboard that demonstrates Hypervisor Domain Isolation and Graceful Degradation under resource constraints.
+
+### 🏗️ File Architecture
+- **`shadow_ai.py`**: A Python WebSocket server at the root running on `ws://localhost:8080`. It simulates vehicle cruise control, monitors CPU/RAM metrics, and handles client commands.
+- **`frontend/`**: The React + Tailwind CSS client application:
+  - `frontend/src/App.jsx`: State machine transitions, low-pass speedometer filters, and MBUX layouts.
+  - `frontend/src/index.css`: Glassmorphic styling, glows, and cabin lighting animations.
+
+### ⚡ Bidirectional System Synchronization
+1. **Interactive AMG Sports Pedals**: Holding **Gas** or **Brake** runs calculation loops at a responsive **50ms interval** (accelerates by `5 km/h`, decelerates by `8 km/h`). These are sent to the Python watchdog server in real-time, allowing speeds up to `260 km/h`.
+2. **Autopilot Cruise Control**: When pedals are released, the server takes back control:
+   - Cruising speeds above `40 km/h` stabilize slowly around `120 km/h`.
+   - Speed below `40 km/h` decays naturally to a complete stop (`0 km/h`).
+3. **Manual State Console**: Clicking `NOMINAL`, `GRACEFUL DEGRADATION`, or `FAILOVER MODE` at the bottom of the dashboard broadcasts commands to the Python server, aligning the backend state.
+4. **🔄 Manual MBUX Reboot**: Clicking the glowing cyan button inside the `FAILOVER` view sends a reset signal to the Python server and locks a **3-second recovery phase** ("*MBUX Core Restoring...*") on the screen.
+
+### 🎵 Premium Zero-Layer Overlay Additions
+- **Spotify Premium**: Spinning Vinyl album art, Dolby Atmos sound profiler presets, and a clickable playlist (clicking tracks shifts songs, updates album art colors, and syncs play controls).
+- **WhatsApp Messaging**: Chats list sidebar with unread notifications, sent/received active bubbles, and clickable Quick Auto-Replies.
+
+### 🚀 Running the Cockpit Dashboard
+
+#### 1. Start the Watchdog Server (Terminal 1)
+```powershell
+# Install websockets dependency if needed
+pip install websockets
+
+# Start the server
+python shadow_ai.py
+```
+
+#### 2. Start the Vite React Frontend (Terminal 2)
+```powershell
+cd frontend
+
+# Install package dependencies
+npm install
+
+# Start Vite developer server
+npm run dev
+```
+👉 Open **[http://localhost:5173/](http://localhost:5173/)** to preview!
