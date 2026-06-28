@@ -1,2 +1,29 @@
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Node/Web
+node_modules/
+frontend/node_modules/
+dist/
+dist-ssr/
+*.local
+.env
+.env.*
+
+# Logs & Caches
+*.log
+.eslintcache
+.parcel-cache
+.turbo
+.vercel
+.cache/
+.tmp/
+
+# OS/System
+.DS_Store
+Thumbs.db

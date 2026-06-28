@@ -1,0 +1,164 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  
+  --color-neon-blue: #00d2ff;
+  --color-neon-cyan: #00f0ff;
+  --color-neon-amber: #ffaa00;
+  --color-neon-gold: #ffd700;
+  --color-neon-red: #ff3344;
+  --color-deep-blue: #000c24;
+  --color-panel-gray: #121214;
+  
+  --animate-glow-pulse: glowPulse 4s ease-in-out infinite;
+  --animate-cabin-breathe: cabinBreathe 10s ease-in-out infinite;
+  --animate-road-flow: roadFlow 20s linear infinite;
+  --animate-radar-spin: radarSpin 4s linear infinite;
+  --animate-map-pulse: mapPulse 2s ease-in-out infinite;
+}
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.2; filter: blur(70px); }
+  50% { opacity: 0.4; filter: blur(95px); }
+}
+
+@keyframes cabinBreathe {
+  0%, 100% { 
+    opacity: 0.15; 
+    filter: blur(80px);
+    transform: scale(1.02);
+  }
+  50% { 
+    opacity: 0.35; 
+    filter: blur(110px);
+    transform: scale(1.15);
+  }
+}
+
+@keyframes roadFlow {
+  from { stroke-dashoffset: 200; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes radarSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mapPulse {
+  0%, 100% { transform: scale(1) translate(-50%, -50%) rotate(-35deg); opacity: 0.85; filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.4)); }
+  50% { transform: scale(1.25) translate(-40%, -40%) rotate(-35deg); opacity: 1; filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.8)); }
+}
+
+/* Custom premium glows and text shadows */
+.text-glow-white {
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.45), 0 0 20px rgba(255, 255, 255, 0.2);
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.7), 0 0 20px rgba(0, 240, 255, 0.4);
+}
+
+.text-glow-magenta {
+  text-shadow: 0 0 10px rgba(255, 0, 128, 0.7), 0 0 20px rgba(255, 0, 128, 0.4);
+}
+
+.text-glow-amber {
+  text-shadow: 0 0 10px rgba(255, 170, 0, 0.7), 0 0 20px rgba(255, 170, 0, 0.4);
+}
+
+.text-glow-red {
+  text-shadow: 0 0 10px rgba(255, 51, 68, 0.7), 0 0 20px rgba(255, 51, 68, 0.4);
+}
+
+/* Physical curved glass simulation overlay */
+.glass-glare {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.03) 25%,
+    rgba(255, 255, 255, 0.0) 50%,
+    rgba(255, 255, 255, 0.01) 80%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.4);
+}
+
+/* Premium edge-lit frosted glass */
+.glass-panel {
+  background: rgba(10, 15, 30, 0.45);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04), 
+              0 10px 40px 0 rgba(0, 0, 0, 0.6);
+}
+
+.glass-panel-heavy {
+  background: rgba(5, 8, 16, 0.6);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.06), 
+              0 16px 50px 0 rgba(0, 0, 0, 0.85);
+}
+
+.glass-pill {
+  background: rgba(15, 20, 35, 0.5);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* MBUX soundwave bar animation */
+@keyframes soundwave {
+  0%, 100% { height: 8px; }
+  50% { height: 28px; }
+}
+
+.soundwave-bar {
+  animation: soundwave 1.2s ease-in-out infinite;
+}
+
+/* Hide scrollbars globally */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;  /* IE and Edge */
+}
+*::-webkit-scrollbar {
+  display: none; /* Chrome, Safari and Opera */
+}
+
+body {
+  background-color: #000000;
+  color: #ffffff;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  max-width: 100vw;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-inline: none;
+  background-color: #000000;
+}
