@@ -6,6 +6,7 @@ import {
   Sliders,
   Globe,
   Camera,
+  Layers,
   Play,
   Pause,
   SkipForward,
@@ -46,23 +47,29 @@ const PLAYLIST = [
   {
     title: 'Celestial Drive',
     artist: 'AURORA',
-    duration: 272, // 4:32
+    type: 'Ambient Pop',
+    duration: 372, // 6:12
     art: '/album_art.png',
-    color: 'from-purple-600 via-pink-500 to-blue-500'
+    color: 'from-purple-600 via-pink-500 to-blue-500',
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
   },
   {
     title: 'Midnight Cruise',
     artist: "L'AVENUE",
-    duration: 215, // 3:35
+    type: 'Synthwave',
+    duration: 544, // 9:04
     art: 'gradient-1',
-    color: 'from-pink-600 via-rose-500 to-orange-500'
+    color: 'from-pink-600 via-rose-500 to-orange-500',
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3'
   },
   {
     title: 'Neon Horizon',
     artist: 'KAVINSKY',
-    duration: 188, // 3:08
+    type: 'Electronic',
+    duration: 502, // 8:22
     art: 'gradient-2',
-    color: 'from-red-600 via-purple-500 to-indigo-600'
+    color: 'from-red-600 via-purple-500 to-indigo-600',
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3'
   }
 ]
 
@@ -160,8 +167,15 @@ export default function App() {
   const [wsConnected, setWsConnected] = useState(false)
   const [isRebooting, setIsRebooting] = useState(false)
   const isRebootingRef = useRef(false)
+  const [displayState, setDisplayState] = useState('NOMINAL')
+  const [recoveryStage, setRecoveryStage] = useState(null)
   const lastState = useRef('')
+  const prevSystemState = useRef('NOMINAL')
   const wsRef = useRef(null)
+  const [ramUsage, setRamUsage] = useState(45.0)
+  const [mapProgress, setMapProgress] = useState(0.2)
+  const audioRef = useRef(null)
+  const rebootTimerRef = useRef(null)
 
   // Refs for gas & brake continuous press timers
   const accelInterval = useRef(null)
@@ -204,21 +218,10 @@ export default function App() {
           }
           if (data.battery !== undefined) setBattery(data.battery)
           if (data.range !== undefined) setRange(data.range)
+          if (data.ram_usage !== undefined) setRamUsage(data.ram_usage)
 
-          // State Machine Transitions & 3s Reboot Sequence
-          if (lastState.current === 'FAILOVER' && mappedState === 'NOMINAL') {
-            isRebootingRef.current = true
-            setIsRebooting(true)
-            setSystemState('REBOOT')
-            setTimeout(() => {
-              isRebootingRef.current = false
-              setIsRebooting(false)
-              setSystemState('NOMINAL')
-            }, 3000)
-          } else if (!isRebootingRef.current) {
-            setSystemState(mappedState)
-          }
-
+          // State Machine Transitions - RTOS updates immediately, reboot timer intercepts displayState in effect hook
+          setSystemState(mappedState)
           lastState.current = mappedState
         } catch (e) {
           console.error("Error parsing telemetry", e)
@@ -246,6 +249,18 @@ export default function App() {
       clearTimeout(reconnectTimeout)
     }
   }, [])
+
+  // Derived state sync - no auto recovery timers (recovery is button-driven)
+  useEffect(() => {
+    if (systemState === 'FAILOVER') {
+      if (rebootTimerRef.current) clearTimeout(rebootTimerRef.current)
+      setRecoveryStage(null)
+    }
+    if (systemState !== 'NOMINAL' || (displayState !== 'REBOOTING' && displayState !== 'BLACKOUT')) {
+      setDisplayState(systemState)
+    }
+    prevSystemState.current = systemState
+  }, [systemState])
 
   // Time & Clock sync
   useEffect(() => {
@@ -340,17 +355,40 @@ export default function App() {
     setIsSpeedWarning(speed > speedLimit)
   }, [speed, systemState])
 
-  // Music progress timer
+  // Dynamic map progress router interval
   useEffect(() => {
-    if (!isPlaying) return
-    const interval = setInterval(() => {
-      setMusicProgress(prev => {
-        if (prev >= currentTrack.duration) return 0
-        return prev + 1
-      })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [isPlaying, currentTrack])
+    const timer = setInterval(() => {
+      if (speed !== 0) {
+        setMapProgress(prev => {
+          let next = prev + (speed * 0.00007)
+          if (next > 1.0) next = 0.0
+          if (next < 0.0) next = 1.0
+          return next
+        })
+      }
+    }, 30)
+    return () => clearInterval(timer)
+  }, [speed])
+
+  const requestAudioPlayback = () => {
+    if (!audioRef.current) return
+
+    audioRef.current.play().catch(err => {
+      console.warn("Audio playback blocked until a user clicks play:", err)
+      setIsPlaying(false)
+    })
+  }
+
+  // HTML5 Audio sync controller
+  useEffect(() => {
+    if (!audioRef.current) return
+
+    if (isPlaying) {
+      requestAudioPlayback()
+    } else {
+      audioRef.current.pause()
+    }
+  }, [isPlaying, currentTrackIdx])
 
   // Equalizer visualizer
   useEffect(() => {
@@ -485,14 +523,22 @@ export default function App() {
     }
   }
 
-  const handleNextTrack = () => {
-    setCurrentTrackIdx(prev => (prev + 1) % PLAYLIST.length)
+  const playTrack = (trackIdx) => {
+    if (trackIdx === currentTrackIdx && audioRef.current) {
+      audioRef.current.currentTime = 0
+      requestAudioPlayback()
+    }
+    setCurrentTrackIdx(trackIdx)
     setMusicProgress(0)
+    setIsPlaying(true)
+  }
+
+  const handleNextTrack = () => {
+    playTrack((currentTrackIdx + 1) % PLAYLIST.length)
   }
 
   const handlePrevTrack = () => {
-    setCurrentTrackIdx(prev => (prev - 1 + PLAYLIST.length) % PLAYLIST.length)
-    setMusicProgress(0)
+    playTrack((currentTrackIdx - 1 + PLAYLIST.length) % PLAYLIST.length)
   }
 
   const toggleSeatHeater = (side) => {
@@ -547,8 +593,64 @@ export default function App() {
   const currentRpm = gear === 'P' || gear === 'N' ? 800 : Math.min(8000, Math.abs(speed) * 28 + 1000)
   const sportDialAngle = 135 + (currentRpm / maxRpm) * 270
 
+  const getRouteCoordinates = (t) => {
+    let x, y, dx, dy
+    if (t <= 0.5) {
+      const u = t * 2
+      x = (1 - u) * (1 - u) * 320 + 2 * (1 - u) * u * 220 + u * u * 280
+      y = (1 - u) * (1 - u) * 450 + 2 * (1 - u) * u * 290 + u * u * 180
+      dx = 2 * (1 - u) * (220 - 320) + 2 * u * (280 - 220)
+      dy = 2 * (1 - u) * (290 - 450) + 2 * u * (180 - 290)
+    } else {
+      const u = (t - 0.5) * 2
+      x = (1 - u) * (1 - u) * 280 + 2 * (1 - u) * u * 340 + u * u * 220
+      y = (1 - u) * (1 - u) * 180 + 2 * (1 - u) * u * 70 + u * u * (-50)
+      dx = 2 * (1 - u) * (340 - 280) + 2 * u * (220 - 340)
+      dy = 2 * (1 - u) * (70 - 180) + 2 * u * (-50 - 70)
+    }
+    const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90
+    return { x, y, angle }
+  }
+
+  const vehiclePos = getRouteCoordinates(mapProgress)
+
   const roadAnimDuration = speed !== 0 ? `${Math.max(0.4, Math.min(12, 100 / Math.abs(speed)))}s` : '0s'
   const roadAnimDirection = speed < 0 ? 'reverse' : 'normal'
+
+  const getHudClasses = () => {
+    switch (systemState) {
+      case 'DEGRADED':
+        return {
+          size: 'w-[260px] h-[100px] rounded-2xl',
+          innerRound: 'rounded-[15px]',
+          glow: 'from-amber-600 via-orange-500 to-yellow-500 shadow-[0_0_15px_rgba(245,158,11,0.2)]',
+          dot: 'bg-amber-400 shadow-[0_0_8px_#f59e0b]'
+        }
+      case 'FAILOVER':
+        return {
+          size: 'w-[260px] h-[100px] rounded-2xl',
+          innerRound: 'rounded-[15px]',
+          glow: 'from-red-600 via-rose-500 to-red-800 shadow-[0_0_20px_rgba(239,68,68,0.3)]',
+          dot: 'bg-red-500 shadow-[0_0_10px_#ef4444] animate-ping'
+        }
+      case 'REBOOT':
+        return {
+          size: 'w-[160px] h-[34px] rounded-full',
+          innerRound: 'rounded-full',
+          glow: 'from-cyan-500 via-blue-500 to-indigo-500 shadow-[0_0_10px_rgba(6,182,212,0.15)]',
+          dot: 'bg-cyan-400 shadow-[0_0_8px_#06b6d4] animate-pulse'
+        }
+      default: // NOMINAL
+        return {
+          size: 'w-[160px] h-[34px] rounded-full',
+          innerRound: 'rounded-full',
+          glow: 'from-indigo-500 via-purple-500 to-pink-500 shadow-[0_0_10px_rgba(168,85,247,0.15)]',
+          dot: 'bg-indigo-400 shadow-[0_0_8px_#a855f7] animate-pulse'
+        }
+    }
+  }
+
+  const hudStyle = getHudClasses()
 
   return (
     <div className="h-screen w-full bg-black text-white font-sans flex flex-col justify-between overflow-hidden relative select-none">
@@ -556,8 +658,28 @@ export default function App() {
       {/* GLOBAL PHYSICAL GLARE OVERLAY */}
       <div className="absolute inset-0 z-50 glass-glare pointer-events-none"></div>
 
+      {/* APPLE INTELLIGENCE BEZEL NEON GLOW */}
+      <div className={`absolute inset-0 z-40 pointer-events-none transition-all duration-1000 border-2 rounded-[28px] ${
+        displayState === 'NOMINAL' 
+          ? 'border-purple-500/20 shadow-[inset_0_0_20px_rgba(168,85,247,0.15)] animate-[pulse_3s_ease-in-out_infinite]' 
+          : displayState === 'DEGRADED'
+          ? 'border-amber-500/40 shadow-[inset_0_0_30px_rgba(245,158,11,0.25)] animate-[pulse_1.5s_ease-in-out_infinite]'
+          : displayState === 'FAILOVER'
+          ? 'border-red-500/60 shadow-[inset_0_0_40px_rgba(239,68,68,0.4)] animate-pulse'
+          : 'opacity-0 border-transparent'
+      }`}></div>
+
+      {/* HTML5 Audio Player for Actual Music streaming */}
+      <audio 
+        ref={audioRef}
+        src={currentTrack.url}
+        preload="auto"
+        onTimeUpdate={(e) => setMusicProgress(Math.floor(e.currentTarget.currentTime))}
+        onEnded={handleNextTrack}
+      />
+
       {/* MBUX BREATHING AMBIENT CABIN LIGHTS */}
-      {systemState === 'NOMINAL' && (
+      {displayState === 'NOMINAL' && (
         <>
           {ambientColor === 'CYAN' ? (
             <>
@@ -1035,114 +1157,227 @@ export default function App() {
         {/* RIGHT ZONE: INFOTAINMENT & MAP & APPS (70% Width) */}
         <div className="w-[70%] h-full flex flex-row p-6 pl-2 gap-6 relative">
           
-          {systemState === 'REBOOT' ? (
+          {displayState === 'BLACKOUT' ? (
+            /* SOLID BLACKOUT STATE */
+            <div className="w-full h-full bg-black rounded-3xl flex-1 animate-fade-out duration-300"></div>
+          ) : displayState === 'REBOOTING' ? (
             /* MBUX REBOOTING STATE LAYOUT */
-            <div className="w-full h-full rounded-3xl border border-white/5 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center gap-6 shadow-2xl relative overflow-hidden flex-1">
-              <div className="absolute inset-0 z-0 opacity-10 bg-[radial-gradient(circle_at_center,rgba(0,240,255,0.15)_0%,transparent_75%)]"></div>
-              <div className="relative w-16 h-16 z-10">
-                <div className="absolute inset-0 rounded-full border-4 border-cyan-500/10"></div>
-                <div className="absolute inset-0 rounded-full border-4 border-t-cyan-400 border-r-cyan-400/40 animate-spin"></div>
+            <div className="w-full h-full rounded-3xl bg-black flex flex-col items-center justify-center gap-6 shadow-2xl relative overflow-hidden flex-1 animate-fade-in duration-500">
+              <div className="relative w-12 h-12">
+                <div className="absolute inset-0 rounded-full border border-white/10"></div>
+                <div className="absolute inset-0 rounded-full border border-t-white border-r-white/30 animate-spin"></div>
               </div>
-              <div className="text-center z-10 flex flex-col gap-2">
-                <h2 className="text-sm font-black tracking-[0.25em] text-cyan-400 text-glow-cyan uppercase">
+              <div className="text-center flex flex-col gap-2.5">
+                <h2 className="text-xs font-black tracking-[0.35em] text-white uppercase">
                   MBUX Core Restoring
                 </h2>
-                <p className="text-[10px] text-gray-500 font-mono">
-                  Initializing infotainment subsystem protocols...
+                <p className="text-[9px] text-neutral-500 font-mono">
+                  Re-initializing infotainment subsystem protocols...
                 </p>
               </div>
             </div>
-          ) : systemState !== 'FAILOVER' ? (
+          ) : displayState !== 'FAILOVER' ? (
             <>
               {/* ZERO-LAYER Infotainment main card */}
               <div className={`w-2/3 h-full rounded-3xl relative overflow-hidden flex flex-col justify-between p-6 transition-all duration-500 ${
-                systemState === 'NOMINAL' 
+                displayState === 'NOMINAL' 
                   ? 'border-t border-l border-white/20 border-r border-b border-white/5 shadow-[0_12px_40px_rgba(0,0,0,0.85)] bg-gradient-to-b from-slate-950 to-slate-900' 
                   : 'border border-neutral-800 bg-neutral-900'
               }`}>
                 
-                {/* 3D Map vector simulator */}
-                <div className={`absolute inset-0 z-0 transition-all duration-300 ${
-                  systemState === 'DEGRADED' ? 'saturate-0 opacity-40' : ''
-                }`}>
+                {/* Custom SVG Navigation Map simulator */}
+                <div className="absolute inset-0 z-0 overflow-hidden">
                   <svg 
-                    className="w-full h-full object-cover scale-110 transition-transform duration-700" 
+                    className="w-full h-full object-cover scale-100 transition-transform duration-700" 
                     viewBox="0 0 500 400" 
-                    preserveAspectRatio="none" 
-                    style={{ 
-                      transform: `perspective(600px) rotateX(${is3D ? '12deg' : '0deg'}) scale(${zoomScale})` 
-                    }}
+                    preserveAspectRatio="none"
                   >
-                    
-                    {/* Grid Pattern */}
                     <defs>
-                      <pattern id="grid" width="25" height="25" patternUnits="userSpaceOnUse">
-                        <path d="M 25 0 L 0 0 0 25" fill="none" stroke="rgba(0, 240, 255, 0.03)" strokeWidth="0.5"/>
-                      </pattern>
+                      {/* Rich 3D Dark Blue Gradient for Nominal Background */}
+                      <linearGradient id="map-bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#040a16" />
+                        <stop offset="50%" stopColor="#071329" />
+                        <stop offset="100%" stopColor="#0d2449" />
+                      </linearGradient>
+
+                      {/* Cyan/Purple Active Route Glow Gradient */}
+                      <linearGradient id="route-grad-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#d946ef" />
+                        <stop offset="50%" stopColor="#a855f7" />
+                        <stop offset="100%" stopColor="#06b6d4" />
+                      </linearGradient>
+
+                      {/* Drop Shadow/Glow Filters for Nominal Mode */}
+                      <filter id="route-glow-filter" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="6" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                      </filter>
+
+                      <filter id="arrow-glow-filter" x="-30%" y="-30%" width="160%" height="160%">
+                        <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#a855f7" floodOpacity="0.8" />
+                      </filter>
+
+                      <filter id="pin-glow" x="-40%" y="-40%" width="180%" height="180%">
+                        <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.5" />
+                      </filter>
                     </defs>
-                    <rect width="100%" height="100%" fill="url(#grid)" />
-                    
-                    <path d="M -50 150 Q 100 120 200 180 T 550 120 L 550 450 L -50 450 Z" fill="rgba(0,12,36,0.5)" />
-                    <path d="M -50 250 Q 80 200 240 290 T 550 220 L 550 450 L -50 450 Z" fill="rgba(0, 8, 24, 0.7)" />
 
-                    {/* Secondary roads */}
-                    <path d="M 0 350 Q 180 320 220 200 T 500 100" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
-                    <path d="M -50 280 Q 100 200 350 280 T 550 350" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="2.5" />
-                    <path d="M 120 0 Q 180 150 100 280 T 250 450" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="2.5" />
-
-                    {/* Highway Path */}
-                    <path d="M 320 450 Q 220 290 280 180 T 220 -50" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="10" strokeLinecap="round" />
-
-                    {/* Active Route Gradient */}
-                    <linearGradient id="route-grad" x1="0%" y1="100%" x2="0%" y2="0%">
-                      <stop offset="0%" stopColor="#ff9900" />
-                      <stop offset="50%" stopColor="#ffd700" />
-                      <stop offset="100%" stopColor="#ffaa00" />
-                    </linearGradient>
-
-                    {systemState === 'NOMINAL' && (
-                      <path 
-                        d="M 320 450 Q 220 290 280 180 T 220 -50" 
-                        fill="none" 
-                        stroke="#ffaa00" 
-                        strokeWidth="10" 
-                        strokeLinecap="round" 
-                        opacity="0.3"
-                        filter="blur(5px)"
-                      />
-                    )}
-
-                    {/* Animated Route Line */}
-                    <path 
-                      d="M 320 450 Q 220 290 280 180 T 220 -50" 
-                      fill="none" 
-                      stroke="url(#route-grad)" 
-                      strokeWidth="6" 
-                      strokeLinecap="round"
-                      strokeDasharray="14, 8"
-                      className={speed !== 0 ? 'animate-road-flow' : ''}
-                      style={{ 
-                        animationDuration: roadAnimDuration,
-                        animationDirection: roadAnimDirection
-                      }}
+                    {/* SVG Map Background */}
+                    <rect 
+                      width="100%" 
+                      height="100%" 
+                      fill={displayState === 'NOMINAL' ? 'url(#map-bg-grad)' : '#121212'} 
                     />
 
-                    {/* Vehicle Pointer */}
-                    <g transform="translate(262, 235)">
-                      {systemState === 'NOMINAL' && (
-                        <circle r="22" fill="rgba(255, 170, 0, 0.15)" stroke="rgba(255, 170, 0, 0.4)" strokeWidth="1" className="animate-ping" style={{ animationDuration: '3s' }} />
-                      )}
+                    {/* Secondary roads */}
+                    <g>
+                      <path 
+                        d="M 20 200 C 100 120, 200 300, 480 300" 
+                        fill="none" 
+                        stroke={displayState === 'NOMINAL' ? 'rgba(0, 240, 255, 0.08)' : '#ffffff'} 
+                        strokeWidth={displayState === 'NOMINAL' ? '3.5' : '1'} 
+                        opacity={displayState === 'NOMINAL' ? '0.7' : '0.2'} 
+                      />
+                      <path 
+                        d="M 100 380 C 150 250, 350 250, 400 20" 
+                        fill="none" 
+                        stroke={displayState === 'NOMINAL' ? 'rgba(0, 240, 255, 0.08)' : '#ffffff'} 
+                        strokeWidth={displayState === 'NOMINAL' ? '3.5' : '1'} 
+                        opacity={displayState === 'NOMINAL' ? '0.7' : '0.2'} 
+                      />
+                      <path 
+                        d="M 450 380 C 350 300, 200 100, 50 50" 
+                        fill="none" 
+                        stroke={displayState === 'NOMINAL' ? 'rgba(0, 240, 255, 0.08)' : '#ffffff'} 
+                        strokeWidth={displayState === 'NOMINAL' ? '3.5' : '1'} 
+                        opacity={displayState === 'NOMINAL' ? '0.7' : '0.2'} 
+                      />
+                    </g>
+
+                    {/* Main Active Route Path */}
+                    {displayState === 'NOMINAL' ? (
+                      <>
+                        {/* Glow outline layer */}
+                        <path 
+                          id="active-route"
+                          d="M 60 330 L 150 330 Q 170 330, 170 310 L 170 240 Q 170 220, 190 220 L 300 220 Q 320 220, 320 200 L 320 130 Q 320 110, 340 110 L 430 110 Q 450 110, 450 90 L 450 70"
+                          fill="none" 
+                          stroke="url(#route-grad-glow)" 
+                          strokeWidth="10" 
+                          strokeLinecap="round"
+                          filter="url(#route-glow-filter)"
+                          opacity="0.8"
+                        />
+                        {/* Realistic 3D Breadcrumb Dots (Dotted Route) */}
+                        <path 
+                          d="M 60 330 L 150 330 Q 170 330, 170 310 L 170 240 Q 170 220, 190 220 L 300 220 Q 320 220, 320 200 L 320 130 Q 320 110, 340 110 L 430 110 Q 450 110, 450 90 L 450 70"
+                          fill="none" 
+                          stroke="#ffffff" 
+                          strokeWidth="6" 
+                          strokeLinecap="round"
+                          strokeDasharray="1, 15"
+                        />
+
+                        {/* START PIN (Red pin at 60, 330) */}
+                        <g transform="translate(60, 330) scale(0.75)" filter="url(#pin-glow)">
+                          {/* Pin drop shadow base */}
+                          <ellipse cx="0" cy="5" rx="6" ry="3" fill="#000000" opacity="0.4" />
+                          {/* Map Pin Shape */}
+                          <path 
+                            d="M 0 0 C -12 -12, -12 -30, 0 -30 C 12 -30, 12 -12, 0 0 Z" 
+                            fill="#EF4444" 
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                          {/* Inner pin cutout hole */}
+                          <circle cx="0" cy="-18" r="4.5" fill="#ffffff" />
+                        </g>
+
+                        {/* END PIN (Green pin at 450, 70) */}
+                        <g transform="translate(450, 70) scale(0.75)" filter="url(#pin-glow)">
+                          {/* Pin drop shadow base */}
+                          <ellipse cx="0" cy="5" rx="6" ry="3" fill="#000000" opacity="0.4" />
+                          {/* Map Pin Shape */}
+                          <path 
+                            d="M 0 0 C -12 -12, -12 -30, 0 -30 C 12 -30, 12 -12, 0 0 Z" 
+                            fill="#10B981" 
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                          {/* Inner pin cutout hole */}
+                          <circle cx="0" cy="-18" r="4.5" fill="#ffffff" />
+                        </g>
+                      </>
+                    ) : (
+                      <>
+                        {/* Flat 2D Dashed Amber Line for Degradation/Failover */}
+                        <path 
+                          id="active-route"
+                          d="M 60 330 L 150 330 Q 170 330, 170 310 L 170 240 Q 170 220, 190 220 L 300 220 Q 320 220, 320 200 L 320 130 Q 320 110, 340 110 L 430 110 Q 450 110, 450 90 L 450 70"
+                          fill="none" 
+                          stroke="#FFB300" 
+                          strokeWidth="4" 
+                          strokeLinecap="round"
+                          strokeDasharray="10, 10"
+                        />
+                        {/* Flat Amber Pin 1 */}
+                        <g transform="translate(60, 330) scale(0.7)" opacity="0.8">
+                          <path 
+                            d="M 0 0 C -12 -12, -12 -30, 0 -30 C 12 -30, 12 -12, 0 0 Z" 
+                            fill="none" 
+                            stroke="#FFB300" 
+                            strokeWidth="2" 
+                          />
+                          <circle cx="0" cy="-18" r="4.5" fill="none" stroke="#FFB300" strokeWidth="1.5" />
+                        </g>
+                        {/* Flat Amber Pin 2 */}
+                        <g transform="translate(450, 70) scale(0.7)" opacity="0.8">
+                          <path 
+                            d="M 0 0 C -12 -12, -12 -30, 0 -30 C 12 -30, 12 -12, 0 0 Z" 
+                            fill="none" 
+                            stroke="#FFB300" 
+                            strokeWidth="2" 
+                          />
+                          <circle cx="0" cy="-18" r="4.5" fill="none" stroke="#FFB300" strokeWidth="1.5" />
+                        </g>
+                      </>
+                    )}
+
+                    {/* Moving Arrow (Navigation Cursor) */}
+                    <g>
+                      <animateMotion 
+                        dur="60s" 
+                        repeatCount="indefinite" 
+                        rotate="auto"
+                      >
+                        <mpath href="#active-route" />
+                      </animateMotion>
                       
-                      <g className={systemState === 'NOMINAL' ? 'animate-map-pulse origin-center' : ''} style={{ transformOrigin: 'center' }}>
-                        <polygon points="0,-10 8,8 0,3 -8,8" fill="#ffd700" stroke="#000" strokeWidth="1.5" />
-                      </g>
+                      {displayState === 'NOMINAL' ? (
+                        /* Solid white arrow with purple drop shadow - pointing East (Right) */
+                        <polygon 
+                          points="-12,-7 12,0 -12,7 -6,0" 
+                          fill="#ffffff" 
+                          filter="url(#arrow-glow-filter)" 
+                        />
+                      ) : (
+                        /* Flat 2D wireframe amber triangle - pointing East (Right) */
+                        <polygon 
+                          points="-12,-7 12,0 -12,7 -6,0" 
+                          fill="none" 
+                          stroke="#FFB300" 
+                          strokeWidth="1.5" 
+                        />
+                      )}
                     </g>
                   </svg>
                 </div>
 
                 {/* Search / Pre-configured target selections */}
-                <div className={`absolute left-6 top-6 w-52 flex flex-col gap-2 z-10 transition-all duration-300 ${
-                  systemState === 'NOMINAL' ? 'glass-panel' : 'bg-neutral-900 border border-neutral-800'
+                <div className={`absolute left-6 z-10 transition-all duration-500 ease-out ${
+                  displayState === 'NOMINAL' ? 'top-16' : 'top-[136px]'
+                } w-52 flex flex-col gap-2 ${
+                  displayState === 'NOMINAL' ? 'glass-panel' : 'bg-neutral-900 border border-neutral-800'
                 } rounded-2xl p-3 shadow-lg`}>
                   <div className="flex items-center gap-2 px-2.5 py-1.5 bg-black/40 rounded-xl border border-white/5 text-xs">
                     <Search size={14} className="text-gray-400 shrink-0" />
@@ -1201,14 +1436,14 @@ export default function App() {
                   <button 
                     onClick={() => setZoomScale(1.1)}
                     className={`w-10 h-10 flex items-center justify-center rounded-xl cursor-pointer hover:scale-105 active:scale-95 transition-all duration-300 ${
-                      systemState === 'NOMINAL' ? 'glass-panel' : 'bg-neutral-900 border border-neutral-800'
+                      displayState === 'NOMINAL' ? 'glass-panel' : 'bg-neutral-900 border border-neutral-800'
                     }`}
                   >
                     <Compass size={18} className={ambientColor === 'CYAN' ? 'text-cyan-400' : 'text-rose-400'} />
                   </button>
                   
                   <div className={`flex flex-col rounded-xl overflow-hidden transition-all duration-300 ${
-                    systemState === 'NOMINAL' ? 'glass-panel' : 'bg-neutral-900 border border-neutral-800'
+                    displayState === 'NOMINAL' ? 'glass-panel' : 'bg-neutral-900 border border-neutral-800'
                   }`}>
                     <button 
                       onClick={() => setZoomScale(prev => Math.min(2.5, prev + 0.2))}
@@ -1224,8 +1459,8 @@ export default function App() {
                     onClick={() => setIs3D(!is3D)}
                     className={`w-10 h-10 flex items-center justify-center text-[10px] font-bold rounded-xl cursor-pointer hover:scale-105 active:scale-95 transition-all duration-300 ${
                       is3D 
-                        ? (systemState === 'NOMINAL' ? (ambientColor === 'CYAN' ? 'glass-panel text-cyan-400 text-glow-cyan' : 'glass-panel text-rose-400 text-glow-magenta') : 'bg-neutral-800 text-white border border-neutral-700')
-                        : (systemState === 'NOMINAL' ? 'glass-panel text-neutral-400' : 'bg-neutral-900 border border-neutral-800 text-neutral-600')
+                        ? (displayState === 'NOMINAL' ? (ambientColor === 'CYAN' ? 'glass-panel text-cyan-400 text-glow-cyan' : 'glass-panel text-rose-400 text-glow-magenta') : 'bg-neutral-800 text-white border border-neutral-700')
+                        : (displayState === 'NOMINAL' ? 'glass-panel text-neutral-400' : 'bg-neutral-900 border border-neutral-800 text-neutral-600')
                     }`}
                   >
                     3D
@@ -1235,10 +1470,10 @@ export default function App() {
                 {/* Floating Navigation Card overlay */}
                 <div className="z-10 w-fit self-end mt-20">
                   <div className={`flex items-center gap-3.5 transition-all duration-300 ${
-                    systemState === 'NOMINAL' ? 'glass-panel-heavy bg-black/40 shadow-lg' : 'bg-neutral-900 border border-neutral-800'
+                    displayState === 'NOMINAL' ? 'glass-panel-heavy bg-black/40 shadow-lg' : 'bg-neutral-900 border border-neutral-800'
                   } rounded-2xl p-4 pr-6`}>
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                      systemState === 'NOMINAL' ? (ambientColor === 'CYAN' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-glow-cyan' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20 text-glow-magenta') : 'bg-neutral-800 text-white'
+                      displayState === 'NOMINAL' ? (ambientColor === 'CYAN' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-glow-cyan' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20 text-glow-magenta') : 'bg-neutral-800 text-white'
                     }`}>
                       <CornerUpRight size={22} className="rotate-270" />
                     </div>
@@ -1253,7 +1488,7 @@ export default function App() {
 
                 {/* Bottom Trip metrics bar */}
                 <div className={`z-10 w-full mt-auto transition-all duration-300 ${
-                  systemState === 'NOMINAL' ? 'glass-panel bg-black/40 shadow-md' : 'bg-neutral-900 border border-neutral-800'
+                  displayState === 'NOMINAL' ? 'glass-panel bg-black/40 shadow-md' : 'bg-neutral-900 border border-neutral-800'
                 } rounded-2xl px-6 py-4 flex justify-between items-center text-xs`}>
                   <div className="flex flex-col">
                     <span className="text-[8px] uppercase tracking-wider text-gray-500 font-bold">Arrival</span>
@@ -1393,6 +1628,7 @@ export default function App() {
                             <div className="mt-4">
                               <h3 className="text-sm font-extrabold text-white tracking-wide">{currentTrack.title}</h3>
                               <p className="text-[10px] text-gray-400 mt-1">{currentTrack.artist}</p>
+                              <p className="text-[8px] font-black text-[#1DB954] uppercase tracking-widest mt-1">{currentTrack.type}</p>
                             </div>
 
                             {/* Control Bar */}
@@ -1405,7 +1641,9 @@ export default function App() {
                                   onClick={(e) => {
                                     const rect = e.currentTarget.getBoundingClientRect()
                                     const pct = (e.clientX - rect.left) / rect.width
-                                    setMusicProgress(Math.floor(pct * currentTrack.duration))
+                                    const newTime = Math.floor(pct * currentTrack.duration)
+                                    setMusicProgress(newTime)
+                                    if (audioRef.current) audioRef.current.currentTime = newTime
                                   }}
                                 >
                                   <div 
@@ -1453,11 +1691,7 @@ export default function App() {
                                   return (
                                     <button
                                       key={trackIdx}
-                                      onClick={() => {
-                                        setCurrentTrackIdx(trackIdx)
-                                        setMusicProgress(0)
-                                        setIsPlaying(true)
-                                      }}
+                                      onClick={() => playTrack(trackIdx)}
                                       className={`w-full flex items-center gap-2.5 p-2 rounded-xl text-left border transition-all cursor-pointer ${
                                         isActive 
                                           ? 'border-[#1DB954]/40 bg-[#1DB954]/5 text-[#1DB954]' 
@@ -1469,7 +1703,7 @@ export default function App() {
                                       </div>
                                       <div className="flex-1 min-w-0">
                                         <div className="text-[9px] font-bold truncate">{track.title}</div>
-                                        <div className="text-[7px] text-gray-500 truncate mt-0.5">{track.artist}</div>
+                                        <div className="text-[7px] text-gray-500 truncate mt-0.5">{track.artist} · {track.type}</div>
                                       </div>
                                     </button>
                                   )
@@ -1799,7 +2033,7 @@ export default function App() {
                 
                 {/* Apps Grid Panel */}
                 <div className={`flex-1 rounded-3xl p-5 flex flex-col justify-between transition-all duration-300 ${
-                  systemState === 'NOMINAL' 
+                  displayState === 'NOMINAL' 
                     ? 'border-t border-l border-white/15 border-r border-b border-white/5 bg-slate-950/40 backdrop-blur-md shadow-md' 
                     : 'border border-neutral-800 bg-neutral-900'
                 }`}>
@@ -1828,7 +2062,7 @@ export default function App() {
                           className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-500 ease-out cursor-pointer ${
                             isActiveOverlay
                               ? (ambientColor === 'CYAN' ? 'bg-cyan-500/15 border-cyan-500/40 scale-105 shadow-md shadow-cyan-950/20' : 'bg-rose-500/15 border-rose-500/40 scale-105 shadow-md shadow-rose-950/20')
-                              : (systemState === 'NOMINAL' 
+                              : (displayState === 'NOMINAL' 
                                 ? 'bg-white/4 border border-white/5 hover:bg-white/10 hover:border-white/40 hover:-translate-y-1 active:scale-95 shadow-sm' 
                                 : 'bg-neutral-800/60 border border-neutral-800')
                           }`}
@@ -1838,7 +2072,7 @@ export default function App() {
                             className={`transition-all duration-500 ${
                               isActiveOverlay
                                 ? (ambientColor === 'CYAN' ? 'text-cyan-400 text-glow-cyan' : 'text-rose-400 text-glow-magenta')
-                                : (systemState === 'NOMINAL' ? app.color : 'text-neutral-400')
+                                : (displayState === 'NOMINAL' ? app.color : 'text-neutral-400')
                             }`} 
                           />
                           <span className="text-[8px] text-gray-400 font-bold mt-1 text-center truncate w-full">
@@ -1852,14 +2086,14 @@ export default function App() {
 
                 {/* Media Player Glass Card */}
                 <div className={`rounded-3xl p-5 flex flex-col gap-3 transition-all duration-300 ${
-                  systemState === 'NOMINAL' 
+                  displayState === 'NOMINAL' 
                     ? 'border-t border-l border-white/15 border-r border-b border-white/5 bg-slate-950/60 backdrop-blur-xl shadow-lg' 
                     : 'border border-neutral-800 bg-neutral-900'
                 }`}>
                   <div className="flex items-center gap-4">
                     
                     <div className="relative shrink-0">
-                      {systemState === 'NOMINAL' ? (
+                      {displayState === 'NOMINAL' ? (
                         <div className="relative group cursor-pointer w-14 h-14 rounded-full overflow-hidden border border-purple-500/30 flex items-center justify-center shadow-lg shadow-purple-900/30">
                           {currentTrack.art === '/album_art.png' ? (
                             <img 
@@ -1888,9 +2122,9 @@ export default function App() {
                       <h4 className="text-xs font-bold text-white truncate drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
                         {currentTrack.title}
                       </h4>
-                      <p className="text-[10px] text-gray-400 mt-0.5 truncate font-medium">{currentTrack.artist}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5 truncate font-medium">{currentTrack.artist} · {currentTrack.type}</p>
                       
-                      {systemState === 'NOMINAL' && isPlaying && (
+                      {displayState === 'NOMINAL' && isPlaying && (
                         <div className="flex items-end gap-0.5 h-3.5 mt-1">
                           {equalizerHeights.map((h, i) => (
                             <div 
@@ -1915,7 +2149,7 @@ export default function App() {
                       <button 
                         onClick={() => setIsPlaying(!isPlaying)}
                         className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer active:scale-95 transition-all duration-500 ease-out ${
-                          systemState === 'NOMINAL' 
+                          displayState === 'NOMINAL' 
                             ? (ambientColor === 'CYAN' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-glow-cyan shadow-[0_0_10px_rgba(6,182,212,0.2)] hover:bg-cyan-500/25 hover:border-cyan-400/50 hover:shadow-[0_0_12px_rgba(6,182,212,0.4)]' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30 text-glow-magenta shadow-[0_0_10px_rgba(244,63,94,0.2)] hover:bg-rose-500/25 hover:border-rose-400/50 hover:shadow-[0_0_12px_rgba(244,63,94,0.4)]') 
                             : 'bg-white text-black hover:bg-neutral-200'
                         }`}
@@ -1938,12 +2172,14 @@ export default function App() {
                       onClick={(e) => {
                         const rect = e.currentTarget.getBoundingClientRect()
                         const pct = (e.clientX - rect.left) / rect.width
-                        setMusicProgress(Math.floor(pct * currentTrack.duration))
+                        const newTime = Math.floor(pct * currentTrack.duration)
+                        setMusicProgress(newTime)
+                        if (audioRef.current) audioRef.current.currentTime = newTime
                       }}
                     >
                       <div 
                         className={`h-full transition-all duration-1000 ${
-                          systemState === 'NOMINAL' ? (ambientColor === 'CYAN' ? 'bg-gradient-to-r from-cyan-400 to-purple-400' : 'bg-gradient-to-r from-rose-400 to-purple-400') : 'bg-white'
+                          displayState === 'NOMINAL' ? (ambientColor === 'CYAN' ? 'bg-gradient-to-r from-cyan-400 to-purple-400' : 'bg-gradient-to-r from-rose-400 to-purple-400') : 'bg-white'
                         }`}
                         style={{ width: `${(musicProgress / currentTrack.duration) * 100}%` }}
                       ></div>
@@ -1970,29 +2206,53 @@ export default function App() {
                   ISO-26262 functional safety limits initialized. All non-essential graphics cores are powered down.
                 </p>
                 <div className="mt-8 px-6 py-2 border border-red-500/30 bg-red-950/20 text-red-500 text-xs font-mono font-bold tracking-widest uppercase rounded">
-                  SYSTEM CORE: DEGRADED OPERATION
+                  {recoveryStage === 'INITIATED' 
+                    ? 'RECOVERY INIT: POWER CYCLING...' 
+                    : 'SYSTEM CORE: DEGRADED OPERATION'}
                 </div>
 
-                {/* Manual Reboot Button */}
+                {/* Manual Recovery and Reboot Button */}
                 <button
+                  disabled={recoveryStage === 'INITIATED'}
                   onClick={() => {
+                    // Clear any prior timers
+                    if (rebootTimerRef.current) clearTimeout(rebootTimerRef.current)
+
                     // Send reset signal to watchdog backend
                     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                       wsRef.current.send(JSON.stringify({ action: "reset" }))
                     }
-                    // Force local reboot simulation transition immediately
-                    isRebootingRef.current = true
-                    setIsRebooting(true)
-                    setSystemState('REBOOT')
-                    setTimeout(() => {
-                      isRebootingRef.current = false
-                      setIsRebooting(false)
-                      setSystemState('NOMINAL')
-                    }, 3000)
+
+                    // Step 1: Initiate recovery (Show Critical Failover with status label for 2 seconds)
+                    setRecoveryStage('INITIATED')
+
+                    const t1 = setTimeout(() => {
+                      // Step 2: Shut down (Blackout) for 2 seconds
+                      setDisplayState('BLACKOUT')
+                      setRecoveryStage(null)
+
+                      const t2 = setTimeout(() => {
+                        // Step 3: Rebooting circular loader for 3 seconds
+                        setDisplayState('REBOOTING')
+
+                        const t3 = setTimeout(() => {
+                          // Step 4: Restore NOMINAL
+                          setDisplayState('NOMINAL')
+                          setSystemState('NOMINAL')
+                        }, 3000)
+                        rebootTimerRef.current = t3
+                      }, 2000)
+                      rebootTimerRef.current = t2
+                    }, 2000)
+                    rebootTimerRef.current = t1
                   }}
-                  className="mt-8 px-6 py-2.5 rounded-full border border-cyan-500/40 bg-cyan-950/15 text-cyan-400 font-black text-[10px] uppercase tracking-widest hover:bg-cyan-500/25 active:scale-95 transition-all duration-300 shadow-[0_0_15px_rgba(6,182,212,0.35)] cursor-pointer text-glow-cyan"
+                  className={`mt-8 px-6 py-2.5 rounded-full border border-cyan-500/40 bg-cyan-950/15 text-cyan-400 font-black text-[10px] uppercase tracking-widest hover:bg-cyan-500/25 active:scale-95 transition-all duration-300 shadow-[0_0_15px_rgba(6,182,212,0.35)] cursor-pointer text-glow-cyan ${
+                    recoveryStage === 'INITIATED' ? 'opacity-50 cursor-not-allowed animate-pulse' : ''
+                  }`}
                 >
-                  🔄 REBOOT MBUX SYSTEM
+                  {recoveryStage === 'INITIATED' 
+                    ? '⚡ REBOOTING IN 2S...' 
+                    : '🔄 RECOVER & REBOOT SYSTEM'}
                 </button>
               </div>
 
@@ -2028,6 +2288,69 @@ export default function App() {
               </div>
             </>
           )}
+
+          {/* SHADOW AI HUD OVERLAY */}
+          <div className={`absolute top-6 left-6 z-40 transition-all duration-700 ease-out p-[1.5px] overflow-hidden ${hudStyle.size} ${displayState === 'REBOOTING' ? 'opacity-0 scale-95 pointer-events-none' : 'opacity-100'}`}>
+            {/* Spinning iridescent edge glow background */}
+            <div className="absolute inset-0 rounded-2xl overflow-hidden z-0 pointer-events-none">
+              <div className={`absolute -inset-10 bg-gradient-to-r ${hudStyle.glow} animate-[spin_4s_linear_infinite] blur-md opacity-80`}></div>
+            </div>
+
+            {/* Inner container (masks center of glow) */}
+            <div className={`relative w-full h-full bg-black/85 ${hudStyle.innerRound} backdrop-blur-3xl p-3 z-10 transition-all duration-700 ease-out overflow-hidden`}>
+              
+              {/* NOMINAL HUD */}
+              {displayState === 'NOMINAL' && (
+                <div className="flex items-center justify-center gap-2 h-full w-full px-2 animate-fade-in">
+                  <span className={`w-1.5 h-1.5 rounded-full ${hudStyle.dot} shrink-0`}></span>
+                  <span className="text-[9px] font-black tracking-widest text-white/80 uppercase">
+                    Shadow AI: Optimized
+                  </span>
+                </div>
+              )}
+
+              {/* DEGRADED HUD */}
+              {displayState === 'DEGRADED' && (
+                <div className="flex flex-col h-full justify-between animate-fade-in font-sans text-left">
+                  <div className="flex justify-between items-center border-b border-amber-500/20 pb-1">
+                    <span className="font-black text-[9px] text-amber-400 tracking-wider uppercase">System Tuning</span>
+                    <span className="font-mono text-[8px] text-amber-500 font-bold">RAM: {Math.round(ramUsage)}%</span>
+                  </div>
+                  <div className="flex-1 flex flex-col justify-center gap-1 mt-1 text-[9px] text-gray-300 font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-amber-500"></span>
+                      <span>Isolating memory leak</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-amber-500"></span>
+                      <span>Tuning display pipelines</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* FAILOVER HUD */}
+              {displayState === 'FAILOVER' && (
+                <div className="flex flex-col h-full justify-between animate-fade-in font-sans text-left">
+                  <div className="flex justify-between items-center border-b border-red-500/20 pb-1">
+                    <span className="font-black text-[9px] text-red-500 tracking-wider uppercase">Driver Protection</span>
+                    <span className="font-mono text-[8px] text-red-500 font-bold">RAM: {Math.round(ramUsage)}%</span>
+                  </div>
+                  <div className="flex-1 flex flex-col justify-center gap-1 mt-1 text-[9px] text-gray-300 font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-red-500 animate-ping"></span>
+                      <span className="text-red-400 font-bold">Infotainment suspended</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-emerald-500"></span>
+                      <span className="text-emerald-400">Protecting driver core</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
 
         </div>
       </div>
